@@ -10,11 +10,6 @@ import numpy as np
 
 
 def main() -> None:
-    import joblib
-    from sklearn.metrics import roc_curve
-    from .dataset import extract_dataset
-    from .embeddings import ECAPAEmbedder
-    from .train import best_threshold, verification_metrics
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", type=Path, default=Path("speaker/models/best.joblib"))
     parser.add_argument("--owner", type=Path, default=Path("data/speakers/owner"))
@@ -22,6 +17,11 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=Path("runs/speaker/evaluation.json"))
     parser.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto")
     args = parser.parse_args()
+    import joblib
+    from sklearn.metrics import roc_curve
+    from .dataset import extract_dataset
+    from .embeddings import ECAPAEmbedder
+    from .train import best_threshold, verification_metrics
     artifact = joblib.load(args.model)
     x, y, _ = extract_dataset(ECAPAEmbedder(args.device), args.owner, args.negatives)
     scores = x @ artifact["owner_embedding"] if artifact["kind"] == "cosine" else artifact["classifier"].predict_proba(x)[:, 1]

@@ -141,7 +141,22 @@ def _read_yaml(path: str | Path) -> dict[str, Any]:
 
 
 def load_settings(path: str | Path = "config/settings.yaml") -> Settings:
-    return Settings.model_validate(_read_yaml(path))
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        load_dotenv = None
+    if load_dotenv is not None:
+        load_dotenv(ROOT / ".env", override=False)
+    data = _read_yaml(path)
+    llm_overrides = {
+        "url": os.getenv("NOVA_OLLAMA_URL"),
+        "model": os.getenv("NOVA_OLLAMA_MODEL"),
+    }
+    if any(llm_overrides.values()):
+        llm = dict(data.get("llm") or {})
+        llm.update({key: value for key, value in llm_overrides.items() if value})
+        data["llm"] = llm
+    return Settings.model_validate(data)
 
 
 def load_apps(path: str | Path = "config/apps.yaml") -> dict[str, AppConfig]:
@@ -157,4 +172,3 @@ def load_projects(path: str | Path = "config/projects.yaml") -> dict[str, Projec
 def load_permissions(path: str | Path = "config/permissions.yaml") -> dict[str, PermissionConfig]:
     raw = _read_yaml(path).get("permissions", {})
     return {name.lower(): PermissionConfig.model_validate(value or {}) for name, value in raw.items()}
-

@@ -25,9 +25,20 @@ def test_confirmation_is_single_use_and_expires() -> None:
     action = Action(type=ActionType.SHUTDOWN)
     manager = ConfirmationManager(timeout_seconds=1)
     pending = manager.request(action)
-    assert manager.respond("ยืนยัน", pending.token) == action
+    assert manager.respond("ยืนยัน!", pending.token) == action
     assert manager.respond("confirm", pending.token) is None
     expiring = ConfirmationManager(timeout_seconds=0.01)
     pending = expiring.request(action)
     time.sleep(0.03)
     assert expiring.respond("confirm", pending.token) is None
+
+
+def test_replay_protection_master_switch() -> None:
+    action = Action(type=ActionType.LOCK_PC)
+    policy = {"lock_pc": PermissionConfig(level=2, confirmation=True, challenge=True)}
+    owner = AuthorizationContext(speaker_verified=True)
+    disabled = PermissionManager(policy, replay_enabled=False)
+    enabled = PermissionManager(policy, replay_enabled=True, challenge_for_level=2)
+    assert not disabled.check(action, owner).requires_challenge
+    assert disabled.check(action, owner).requires_confirmation
+    assert enabled.check(action, owner).requires_challenge

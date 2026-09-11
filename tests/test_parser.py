@@ -14,6 +14,10 @@ def test_entity_extraction_multilingual() -> None:
     assert extract_entities("ตั้งเสียงไว้ 40 เปอร์เซ็นต์", "SET_VOLUME") == {"volume": 40}
     assert extract_entities("search google for pytorch transformer", "WEB_SEARCH") == {"query": "pytorch transformer"}
     assert extract_entities("เปิด vscode ให้หน่อย", "OPEN_APP") == {"app": "vscode"}
+    assert extract_entities("เปดโปรเจกตพอร์ตโฟลิโอ", "OPEN_PROJECT") == {
+        "project": "พอร์ตโฟลิโอ",
+    }
+    assert extract_entities("ปิดโปรแกรม vscode", "CLOSE_APP") == {"app": "vscode"}
 
 
 def test_compound_plan() -> None:
@@ -31,3 +35,9 @@ def test_url_validation_rejects_non_http() -> None:
         pass
     else:
         raise AssertionError("file URL should be rejected")
+
+
+def test_english_project_target_is_cleaned() -> None:
+    assert extract_entities("launch my portfolio project", "OPEN_PROJECT") == {
+        "project": "portfolio",
+    }

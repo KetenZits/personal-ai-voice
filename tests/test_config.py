@@ -18,3 +18,10 @@ def test_invalid_configuration_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         load_settings(path)
 
+
+def test_ollama_environment_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NOVA_OLLAMA_URL", "http://127.0.0.1:9999")
+    monkeypatch.setenv("NOVA_OLLAMA_MODEL", "test-model")
+    settings = load_settings()
+    assert settings.llm.url == "http://127.0.0.1:9999"
+    assert settings.llm.model == "test-model"

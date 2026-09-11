@@ -20,8 +20,14 @@ class AssistantState(str, Enum):
 ALLOWED_TRANSITIONS = {
     AssistantState.IDLE: {AssistantState.LISTENING_FOR_WAKE_WORD, AssistantState.LISTENING_FOR_COMMAND},
     AssistantState.LISTENING_FOR_WAKE_WORD: {AssistantState.VERIFYING_SPEAKER, AssistantState.IDLE},
-    AssistantState.VERIFYING_SPEAKER: {AssistantState.LISTENING_FOR_COMMAND, AssistantState.LISTENING_FOR_WAKE_WORD, AssistantState.IDLE},
-    AssistantState.LISTENING_FOR_COMMAND: {AssistantState.PROCESSING, AssistantState.IDLE, AssistantState.LISTENING_FOR_WAKE_WORD},
+    AssistantState.VERIFYING_SPEAKER: {
+        AssistantState.LISTENING_FOR_COMMAND, AssistantState.PROCESSING,
+        AssistantState.SPEAKING, AssistantState.LISTENING_FOR_WAKE_WORD, AssistantState.IDLE,
+    },
+    AssistantState.LISTENING_FOR_COMMAND: {
+        AssistantState.VERIFYING_SPEAKER, AssistantState.PROCESSING,
+        AssistantState.IDLE, AssistantState.LISTENING_FOR_WAKE_WORD,
+    },
     AssistantState.PROCESSING: {AssistantState.EXECUTING, AssistantState.SPEAKING, AssistantState.IDLE, AssistantState.LISTENING_FOR_WAKE_WORD},
     AssistantState.EXECUTING: {AssistantState.SPEAKING, AssistantState.IDLE, AssistantState.LISTENING_FOR_WAKE_WORD},
     AssistantState.SPEAKING: {AssistantState.IDLE, AssistantState.LISTENING_FOR_WAKE_WORD,
@@ -55,6 +61,7 @@ class StateMachine:
         """Recover to a known state after a hardware/model error."""
         with self._lock:
             self._state = state
+            self._data.clear()
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:

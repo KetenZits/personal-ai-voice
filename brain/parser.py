@@ -17,10 +17,25 @@ def normalize_text(text: str) -> str:
 
 def _after_any(text: str, markers: list[str]) -> str | None:
     for marker in sorted(markers, key=len, reverse=True):
-        match = re.search(rf"(?:^|\s){re.escape(marker)}(?:\s+|$)(.*)", text)
+        # Thai normally has no spaces between a verb and its object. English
+        # markers retain word boundaries to avoid matching inside other words.
+        if any(ord(character) > 127 for character in marker):
+            match = re.search(rf"(?:^|\s){re.escape(marker)}\s*(.*)", text)
+        else:
+            match = re.search(rf"(?:^|\s){re.escape(marker)}(?:\s+|$)(.*)", text)
         if match and match.group(1).strip():
             return match.group(1).strip()
     return None
+
+
+def _clean_target(target: str, *, leading: tuple[str, ...] = (),
+                  trailing: tuple[str, ...] = ()) -> str:
+    value = target.strip()
+    for prefix in leading:
+        value = re.sub(rf"^{re.escape(prefix)}\s+", "", value, flags=re.IGNORECASE)
+    for suffix in trailing:
+        value = re.sub(rf"\s+{re.escape(suffix)}$", "", value, flags=re.IGNORECASE)
+    return value.strip()
 
 
 def extract_entities(text: str, intent: str) -> dict[str, object]:
@@ -32,17 +47,33 @@ def extract_entities(text: str, intent: str) -> dict[str, object]:
     if intent in {"OPEN_APP", "CLOSE_APP"}:
         markers = [
             "open", "launch", "start", "close", "quit", "exit",
+            "เปิดโปรแกรม", "เปดโปรแกรม", "ปิดโปรแกรม", "ปดโปรแกรม",
             "เปิด", "เปด", "ปิด", "ปด", "โปรแกรม", "app",
         ]
         target = _after_any(value, markers)
         if target:
-            target = re.sub(r"\s*(?:ให้หน่อย|ที|please)$", "", target).strip()
+            target = _clean_target(
+                target,
+                leading=("app", "application", "program", "the app", "the program"),
+                trailing=("please", "for me", "ให้หน่อย", "ที"),
+            )
         return {"app": target} if target else {}
     if intent == "OPEN_PROJECT":
-        target = _after_any(value, ["open project", "project", "เปิดโปรเจกต์", "เปดโปรเจกต", "โปรเจกต์", "โปรเจกต"])
+        target = _after_any(value, [
+            "open project", "launch project", "start project", "project",
+            "open", "launch", "start", "เปิดโปรเจกต์", "เปดโปรเจกต",
+            "โปรเจกต์", "โปรเจกต",
+        ])
+        if target:
+            target = _clean_target(
+                target, leading=("my", "the"), trailing=("project", "please", "for me"),
+            )
         return {"project": target} if target else {}
     if intent == "OPEN_FOLDER":
-        target = _after_any(value, ["open folder", "folder", "เปิดโฟลเดอร์", "เปดโฟลเดอร", "โฟลเดอร์"])
+        target = _after_any(value, [
+            "open folder", "show folder", "folder", "เปิดโฟลเดอร์",
+            "เปดโฟลเดอร", "โฟลเดอร์",
+        ])
         return {"path": target} if target else {}
     if intent == "WEB_SEARCH":
         target = _after_any(value, ["search google for", "google", "search for", "search", "ค้น google เรื่อง", "คน google เรอง", "ค้นหา", "คนหา"])

@@ -36,9 +36,13 @@ def train(positive: Path, negative: Path, output: Path, runs: Path, epochs: int 
     from .dataset import WakeWordDataset
     from .models import WakeWordCNN
 
+    if epochs < 1 or batch_size < 1:
+        raise ValueError("epochs and batch_size must both be positive")
     random.seed(seed); np.random.seed(seed); torch.manual_seed(seed)
     dataset = WakeWordDataset(positive, negative, augment=False)
     labels = [int(label) for _, label in dataset.items]
+    if len(set(labels)) != 2 or min(labels.count(0), labels.count(1)) < 2:
+        raise ValueError("Wake-word training needs at least two positive and two negative files")
     indices = list(range(len(dataset)))
     train_indices, val_indices = train_test_split(indices, test_size=0.25, random_state=seed, stratify=labels)
     train_dataset = WakeWordDataset(positive, negative, augment=True)
@@ -52,6 +56,8 @@ def train(positive: Path, negative: Path, output: Path, runs: Path, epochs: int 
     loss_fn = nn.BCEWithLogitsLoss()
     history: list[dict[str, float]] = []
     best = -1.0
+    best_metrics: dict[str, object] = {}
+    best_candidates: list[dict[str, object]] = []
     output.mkdir(parents=True, exist_ok=True)
     for epoch in range(1, epochs + 1):
         epoch_data: dict[str, float] = {"epoch": float(epoch)}
@@ -82,11 +88,14 @@ def train(positive: Path, negative: Path, output: Path, runs: Path, epochs: int 
             torch.save({"state_dict": model.state_dict(), "threshold": selected["threshold"],
                         "sample_rate": 16000, "seconds": 2.0, "n_mels": 40}, output / "best.pt")
             best_metrics = selected
+            best_candidates = candidates
     run = runs / datetime.now().strftime("%Y%m%d-%H%M%S")
     run.mkdir(parents=True, exist_ok=True)
     report = {"device": str(device), "history": history, "validation": best_metrics}
     (run / "metrics.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
-    (run / "threshold_evaluation.json").write_text(json.dumps(candidates, indent=2), encoding="utf-8")
+    (run / "threshold_evaluation.json").write_text(
+        json.dumps(best_candidates, indent=2), encoding="utf-8",
+    )
     return report
 
 
@@ -103,4 +112,3 @@ def main() -> None:
 
 
 if __name__ == "__main__": main()
-

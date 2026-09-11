@@ -41,6 +41,11 @@ class NovaAssistant:
         configure_logging(self.settings.logging.level, self.settings.logging.file, args.debug)
         self.log = logging.getLogger("nova")
         self.state = StateMachine()
+        self.state.update(
+            microphone=str(self.settings.audio.device or "Windows default"),
+            wake_word=self.settings.wakeword.phrase,
+            speaker="PENDING" if self.settings.speaker.enabled else "DISABLED",
+        )
         self.dashboard = DebugDashboard(self.state, args.debug)
         classifier = IntentClassifier(
             self.settings.intent.model_path, self.settings.intent.threshold,
@@ -50,7 +55,10 @@ class NovaAssistant:
         llm = OllamaClient(self.settings.llm.url, self.settings.llm.model,
                            self.settings.llm.timeout_seconds) if self.settings.llm.enabled else None
         self.router = BrainRouter(parser, llm)
-        self.permissions = PermissionManager(load_permissions())
+        replay = self.settings.replay_protection
+        self.permissions = PermissionManager(
+            load_permissions(), replay.enabled, replay.challenge_for_level,
+        )
         self.confirmations = ConfirmationManager(self.settings.assistant.confirmation_timeout_seconds)
         self.challenge = ChallengeResponse()
         apps = AppController(load_apps())
@@ -59,6 +67,7 @@ class NovaAssistant:
         self.transcriber = None
         self.verifier = None
         self.detector = None
+        self._active_microphone: MicrophoneStream | None = None
 
     def initialize_models(self, need_wakeword: bool = True) -> None:
         from stt.whisper import WhisperTranscriber
@@ -78,6 +87,7 @@ class NovaAssistant:
             self.detector = create_detector(
                 self.settings.wakeword.backend, self.settings.wakeword.model_path,
                 self.settings.wakeword.phrase, self.settings.wakeword.threshold,
+                self.settings.audio.sample_rate,
             )
 
     def _speak(self, text: str, return_state: AssistantState = AssistantState.IDLE) -> None:
@@ -86,6 +96,10 @@ class NovaAssistant:
         if current != AssistantState.SPEAKING:
             self.state.transition(AssistantState.SPEAKING)
         self.tts.speak(text)
+        # The input callback keeps running while TTS speaks. Drop those queued
+        # frames so Nova never treats its own prompt as the user's reply.
+        if self._active_microphone is not None:
+            self._active_microphone.clear()
         self.state.transition(return_state)
         self.dashboard.show()
 
@@ -170,7 +184,11 @@ class NovaAssistant:
             log_event(self.log, "INTENT", intent=action.type.name, confidence=action.confidence,
                       action=action.type.value, target=action.target)
             self.dashboard.show()
-            if not self._authorize(action, auth, frames):
+            authorized = self._authorize(action, auth, frames)
+            # A spoken challenge authorizes one action, not the rest of a
+            # compound plan.
+            auth.challenge_passed = False
+            if not authorized:
                 continue
             if self.state.state != AssistantState.EXECUTING:
                 self.state.transition(AssistantState.EXECUTING)
@@ -192,24 +210,35 @@ class NovaAssistant:
             self.initialize_models(need_wakeword=False)
         self.state.transition(AssistantState.LISTENING_FOR_COMMAND)
         with MicrophoneStream(cfg.sample_rate, cfg.frame_ms, cfg.device) as mic:
-            frames = mic.frames()
-            while True:
-                input("Press Enter to record a command (Ctrl+C to stop)...")
-                audio = self._record(frames)
-                if not audio.size:
-                    print("No speech detected"); continue
-                self.state.transition(AssistantState.PROCESSING)
-                auth = self._verify(audio)
-                if not auth.speaker_verified:
-                    self._speak("เสียงนี้ไม่ใช่เจ้าของเครื่อง", AssistantState.LISTENING_FOR_COMMAND); continue
-                try:
-                    text = self._transcribe(audio)
-                except Exception as exc:
-                    self.log.exception("STT failed")
-                    self._speak(f"Speech recognition failed: {exc}", AssistantState.LISTENING_FOR_COMMAND)
-                    continue
-                self.handle_text(text, auth, frames)
-                self.state.transition(AssistantState.LISTENING_FOR_COMMAND)
+            self._active_microphone = mic
+            try:
+                frames = mic.frames()
+                while True:
+                    input("Press Enter to record a command (Ctrl+C to stop)...")
+                    mic.clear()
+                    audio = self._record(frames)
+                    if not audio.size:
+                        print("No speech detected"); continue
+                    if self.settings.speaker.enabled:
+                        self.state.transition(AssistantState.VERIFYING_SPEAKER)
+                    else:
+                        self.state.transition(AssistantState.PROCESSING)
+                    auth = self._verify(audio)
+                    if not auth.speaker_verified:
+                        self._speak("เสียงนี้ไม่ใช่เจ้าของเครื่อง", AssistantState.LISTENING_FOR_COMMAND)
+                        continue
+                    if self.state.state == AssistantState.VERIFYING_SPEAKER:
+                        self.state.transition(AssistantState.PROCESSING)
+                    try:
+                        text = self._transcribe(audio)
+                    except Exception as exc:
+                        self.log.exception("STT failed")
+                        self._speak(f"Speech recognition failed: {exc}", AssistantState.LISTENING_FOR_COMMAND)
+                        continue
+                    self.handle_text(text, auth, frames)
+                    self.state.transition(AssistantState.LISTENING_FOR_COMMAND)
+            finally:
+                self._active_microphone = None
 
     def run_wakeword(self) -> None:
         cfg = self.settings.audio
@@ -219,36 +248,53 @@ class NovaAssistant:
         window: deque[np.ndarray] = deque(maxlen=max(1, int(2.5 * 1000 / cfg.frame_ms)))
         cooldown_until = 0.0
         with MicrophoneStream(cfg.sample_rate, cfg.frame_ms, cfg.device) as mic:
-            frames = mic.frames()
-            for frame in frames:
-                window.append(frame)
-                if time.monotonic() < cooldown_until:
-                    continue
-                detected, score = self.detector.process_frame(frame)
-                self.state.update(wake_word=self.settings.wakeword.phrase, wake_confidence=score)
-                if not detected:
-                    continue
-                log_event(self.log, "WAKEWORD", confidence=score, phrase=self.settings.wakeword.phrase)
-                self.state.transition(AssistantState.VERIFYING_SPEAKER)
-                auth = self._verify(np.concatenate(tuple(window)))
-                if not auth.speaker_verified:
-                    self._speak("เสียงนี้ไม่ใช่เจ้าของเครื่อง", AssistantState.LISTENING_FOR_WAKE_WORD)
+            self._active_microphone = mic
+            try:
+                frames = mic.frames()
+                for frame in frames:
+                    window.append(frame)
+                    if time.monotonic() < cooldown_until:
+                        continue
+                    detected, score = self.detector.process_frame(frame)
+                    self.state.update(wake_word=self.settings.wakeword.phrase, wake_confidence=score)
+                    if not detected:
+                        continue
+                    log_event(self.log, "WAKEWORD", confidence=score, phrase=self.settings.wakeword.phrase)
+                    # Both detector backends keep temporal state. Consume this
+                    # activation once so it cannot retrigger after cooldown.
+                    reset_detector = getattr(self.detector, "reset", None)
+                    if callable(reset_detector):
+                        reset_detector()
+                    self.state.transition(AssistantState.VERIFYING_SPEAKER)
+                    auth = self._verify(np.concatenate(tuple(window)))
+                    if not auth.speaker_verified:
+                        self._speak("เสียงนี้ไม่ใช่เจ้าของเครื่อง", AssistantState.LISTENING_FOR_WAKE_WORD)
+                        window.clear()
+                        cooldown_until = time.monotonic() + self.settings.wakeword.cooldown_seconds
+                        continue
+                    self._speak(self.settings.assistant.greeting, AssistantState.LISTENING_FOR_COMMAND)
+                    command = self._record(frames)
+                    if not command.size:
+                        window.clear()
+                        self.state.transition(AssistantState.LISTENING_FOR_WAKE_WORD)
+                        cooldown_until = time.monotonic() + self.settings.wakeword.cooldown_seconds
+                        continue
+                    self.state.transition(AssistantState.PROCESSING)
+                    try:
+                        text = self._transcribe(command)
+                    except Exception as exc:
+                        self.log.exception("STT failed")
+                        self._speak(f"Speech recognition failed: {exc}", AssistantState.LISTENING_FOR_WAKE_WORD)
+                        window.clear()
+                        cooldown_until = time.monotonic() + self.settings.wakeword.cooldown_seconds
+                        continue
+                    self.handle_text(text, auth, frames)
+                    mic.clear()
+                    window.clear()
+                    self.state.transition(AssistantState.LISTENING_FOR_WAKE_WORD)
                     cooldown_until = time.monotonic() + self.settings.wakeword.cooldown_seconds
-                    continue
-                self._speak(self.settings.assistant.greeting, AssistantState.LISTENING_FOR_COMMAND)
-                command = self._record(frames)
-                if not command.size:
-                    self.state.transition(AssistantState.LISTENING_FOR_WAKE_WORD); continue
-                self.state.transition(AssistantState.PROCESSING)
-                try:
-                    text = self._transcribe(command)
-                except Exception as exc:
-                    self.log.exception("STT failed")
-                    self._speak(f"Speech recognition failed: {exc}", AssistantState.LISTENING_FOR_WAKE_WORD)
-                    continue
-                self.handle_text(text, auth, frames)
-                self.state.transition(AssistantState.LISTENING_FOR_WAKE_WORD)
-                cooldown_until = time.monotonic() + self.settings.wakeword.cooldown_seconds
+            finally:
+                self._active_microphone = None
 
     def run_resilient(self, push_to_talk: bool) -> None:
         """Reopen the microphone after PortAudio/device disconnect errors."""
@@ -280,10 +326,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
-    if args.list_microphones:
-        for device in list_input_devices(): print(device)
-        return 0
     try:
+        if args.list_microphones:
+            for device in list_input_devices():
+                print(device)
+            return 0
         assistant = NovaAssistant(args)
         if args.text:
             assistant.handle_text(args.text, AuthorizationContext(speaker_verified=True))
@@ -291,8 +338,9 @@ def main() -> int:
             assistant.run_resilient(args.push_to_talk)
     except KeyboardInterrupt:
         print("\nNova stopped.")
-    except (FileNotFoundError, RuntimeError) as exc:
-        logging.getLogger("nova").error("Startup failed: %s", exc)
+    except (ImportError, FileNotFoundError, RuntimeError) as exc:
+        if logging.getLogger().handlers:
+            logging.getLogger("nova").error("Startup failed: %s", exc)
         print(f"Startup failed: {exc}", file=sys.stderr)
         return 2
     except Exception:

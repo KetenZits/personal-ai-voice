@@ -5,6 +5,7 @@ from __future__ import annotations
 import secrets
 import threading
 import time
+import unicodedata
 from dataclasses import dataclass
 
 from config.loader import PermissionConfig
@@ -13,8 +14,11 @@ from .schemas import Action, AuthorizationContext, PermissionDecision
 
 
 class PermissionManager:
-    def __init__(self, policies: dict[str, PermissionConfig]) -> None:
+    def __init__(self, policies: dict[str, PermissionConfig], replay_enabled: bool = False,
+                 challenge_for_level: int = 2) -> None:
         self._policies = policies
+        self.replay_enabled = replay_enabled
+        self.challenge_for_level = challenge_for_level
 
     def check(self, action: Action, auth: AuthorizationContext) -> PermissionDecision:
         policy = self._policies.get(action.type.value)
@@ -28,7 +32,10 @@ class PermissionManager:
                 reason="Authorized speaker required",
                 level=policy.level,
             )
-        if policy.challenge and not auth.challenge_passed:
+        challenge_required = self.replay_enabled and (
+            policy.challenge or policy.level >= self.challenge_for_level
+        )
+        if challenge_required and not auth.challenge_passed:
             return PermissionDecision(
                 allowed=False,
                 requires_challenge=True,
@@ -73,15 +80,20 @@ class ConfirmationManager:
 
     def respond(self, text: str, token: str | None = None) -> Action | None:
         normalized = text.casefold().strip()
+        cleaned = "".join(
+            " " if unicodedata.category(character)[0] in {"P", "S"} else character
+            for character in normalized
+        ).strip()
+        tokens = set(cleaned.split())
         with self._lock:
             pending, self._pending = self._pending, None
             if pending is None or time.monotonic() > pending.expires_at:
                 return None
             if token is not None and not secrets.compare_digest(token, pending.token):
                 return None
-            if any(word == normalized or word in normalized.split() for word in self.NO_WORDS):
+            if any(word == cleaned or word in tokens for word in self.NO_WORDS):
                 return None
-            if any(word == normalized or word in normalized.split() for word in self.YES_WORDS):
+            if any(word == cleaned or word in tokens for word in self.YES_WORDS):
                 return pending.action
             return None
 
@@ -95,4 +107,3 @@ class ConfirmationManager:
             if self._pending and time.monotonic() > self._pending.expires_at:
                 self._pending = None
             return self._pending
-

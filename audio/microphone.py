@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import queue
 from collections.abc import Iterator
 from typing import Any
@@ -31,11 +32,11 @@ class MicrophoneStream:
         self.blocksize = sample_rate * frame_ms // 1000
         self._queue: queue.Queue[np.ndarray | None] = queue.Queue(maxsize=100)
         self._stream: object | None = None
+        self.log = logging.getLogger(__name__)
 
     def _callback(self, indata: np.ndarray, frames: int, time_info: object, status: object) -> None:
         if status:
-            # Status is not fatal; overruns are surfaced by the logging layer.
-            pass
+            self.log.warning("Microphone stream status: %s", status)
         frame = np.asarray(indata[:, 0], dtype=np.float32).copy()
         try:
             self._queue.put_nowait(frame)
@@ -61,10 +62,28 @@ class MicrophoneStream:
             self._stream.close()
         self._stream = None
 
+    def clear(self) -> int:
+        """Discard queued frames and return the number removed.
+
+        This is used after TTS and immediately before push-to-talk capture so
+        buffered assistant speech or old room audio cannot become a command.
+        """
+        removed = 0
+        while True:
+            try:
+                self._queue.get_nowait()
+                removed += 1
+            except queue.Empty:
+                return removed
+
     def frames(self) -> Iterator[np.ndarray]:
         while self._stream is not None:
-            frame = self._queue.get()
+            try:
+                frame = self._queue.get(timeout=1.0)
+            except queue.Empty:
+                if not bool(getattr(self._stream, "active", False)):
+                    raise OSError("Microphone stream stopped unexpectedly")
+                continue
             if frame is None:
                 break
             yield frame
-
