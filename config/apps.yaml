@@ -1,0 +1,18 @@
+apps:
+  vscode:
+    aliases: [vscode, visual studio code, code, "วีเอสโค้ด"]
+    executable: code
+    process_names: [Code.exe]
+  chrome:
+    aliases: [chrome, google chrome, "โครม"]
+    path: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+    process_names: [chrome.exe]
+  spotify:
+    aliases: [spotify, music, "สปอติฟาย"]
+    executable: spotify
+    process_names: [Spotify.exe]
+  explorer:
+    aliases: [explorer, file explorer, "ไฟล์เอ็กซ์พลอเรอร์"]
+    executable: explorer.exe
+    process_names: [explorer.exe]
+

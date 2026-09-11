@@ -1,0 +1,54 @@
+assistant:
+  name: Nova
+  greeting: "ว่าไง"
+  confirmation_timeout_seconds: 10
+audio:
+  sample_rate: 16000
+  device: null
+  frame_ms: 30
+  pre_roll_seconds: 1.0
+  silence_seconds: 1.0
+  max_command_seconds: 15
+  vad_backend: auto
+  energy_threshold: 0.015
+wakeword:
+  phrase: Hey Nova
+  backend: custom
+  model_path: wakeword/models/best.pt
+  threshold: 0.80
+  cooldown_seconds: 2
+speaker:
+  enabled: true
+  model_path: speaker/models/best.joblib
+  enrollment_path: speaker/models/owner_embedding.npy
+  threshold: 0.78
+  device: auto
+stt:
+  model: small
+  language: auto
+  device: auto
+  compute_type: auto
+  beam_size: 5
+intent:
+  model_path: intent/models/best.joblib
+  dataset_path: intent/dataset/intents.json
+  threshold: 0.70
+  allow_rule_fallback: true
+tts:
+  enabled: true
+  voice: null
+  rate: 175
+  volume: 1.0
+llm:
+  enabled: false
+  url: http://127.0.0.1:11434
+  model: llama3.2:3b
+  timeout_seconds: 20
+logging:
+  level: INFO
+  file: logs/nova.jsonl
+  audio_enabled: false
+replay_protection:
+  enabled: false
+  challenge_for_level: 2
+

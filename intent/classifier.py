@@ -1,0 +1,69 @@
+"""Saved scikit-learn model with an offline rule fallback."""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+from brain.parser import extract_entities, normalize_text
+from brain.schemas import IntentResult
+
+
+RULES: list[tuple[str, tuple[str, ...]]] = [
+    ("UNMUTE", ("unmute", "เปิดเสียง", "เปดเสยง")),
+    ("MUTE", ("mute", "ปิดเสียง", "ปดเสยง")),
+    ("SET_VOLUME", ("set volume", "ตั้งเสียง", "ตงเสยง")),
+    ("VOLUME_DOWN", ("volume down", "lower volume", "ลดเสียง", "ลดเสยง", "เสียงดังไป", "เสยงดงไป")),
+    ("VOLUME_UP", ("volume up", "increase volume", "เพิ่มเสียง", "เพมเสยง")),
+    ("MEDIA_NEXT", ("next track", "next song", "เพลงถัดไป", "เพลงถดไป")),
+    ("MEDIA_PREVIOUS", ("previous track", "previous song", "เพลงก่อน", "เพลงกอน")),
+    ("MEDIA_PAUSE", ("pause", "หยุดเพลง", "หยดเพลง")),
+    ("MEDIA_PLAY", ("play music", "play song", "เล่นเพลง", "เลนเพลง")),
+    ("SCREENSHOT", ("screenshot", "capture screen", "แคปหน้าจอ", "แคปหนาจอ", "ถ่ายหน้าจอ")),
+    ("GET_SYSTEM_INFO", ("system info", "cpu usage", "ram usage", "gpu info", "uptime", "ข้อมูลระบบ")),
+    ("GET_TIME", ("what time", "current time", "กี่โมง", "เวลาเท่าไร")),
+    ("SHUTDOWN", ("shutdown", "turn off computer", "ปิดเครื่อง", "ปดเครอง")),
+    ("RESTART", ("restart computer", "reboot", "รีสตาร์ท", "เรมระบบใหม")),
+    ("LOCK_PC", ("lock pc", "lock computer", "ล็อกเครื่อง", "ลอกเครอง")),
+    ("OPEN_PROJECT", ("open project", "เปิดโปรเจกต์", "เปดโปรเจกต")),
+    ("OPEN_FOLDER", ("open folder", "เปิดโฟลเดอร์", "เปดโฟลเดอร")),
+    ("WEB_SEARCH", ("search google", "google for", "ค้น google", "คน google", "ค้นหา", "คนหา")),
+    ("OPEN_URL", ("open website", "open url", "go to http", "เข้าเว็บ", "เปดเวบ")),
+    ("CLOSE_APP", ("close app", "close program", "quit ", "ปิดโปรแกรม", "ปดโปรแกรม")),
+    ("OPEN_APP", ("open ", "launch ", "start ", "เปิด ", "เปด ")),
+]
+
+
+class IntentClassifier:
+    def __init__(self, model_path: str | Path, threshold: float = 0.70, allow_rule_fallback: bool = True) -> None:
+        self.model_path = Path(model_path)
+        self.threshold = threshold
+        self.allow_rule_fallback = allow_rule_fallback
+        self.model = None
+        if self.model_path.exists():
+            import joblib
+            self.model = joblib.load(self.model_path)
+
+    def predict(self, text: str) -> IntentResult:
+        normalized = normalize_text(text)
+        if self.model is not None:
+            probabilities = self.model.predict_proba([normalized])[0]
+            index = int(probabilities.argmax())
+            confidence = float(probabilities[index])
+            intent = str(self.model.classes_[index]) if confidence >= self.threshold else "UNKNOWN"
+            if intent != "UNKNOWN" or not self.allow_rule_fallback:
+                return IntentResult(
+                    intent=intent,
+                    confidence=confidence,
+                    entities=extract_entities(normalized, intent),
+                )
+        if self.allow_rule_fallback:
+            for intent, phrases in RULES:
+                if any(phrase in normalized for phrase in phrases):
+                    return IntentResult(
+                        intent=intent,
+                        confidence=0.82,
+                        entities=extract_entities(normalized, intent),
+                    )
+        return IntentResult(intent="UNKNOWN", confidence=0.0, entities={})
+

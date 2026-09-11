@@ -1,0 +1,10 @@
+projects:
+  study-platform:
+    aliases: [study platform, study, platform, "สตัดดี้แพลตฟอร์ม"]
+    path: "C:\\Projects\\study-platform"
+    editor: vscode
+  portfolio:
+    aliases: [portfolio, personal website, "พอร์ตโฟลิโอ"]
+    path: "C:\\Projects\\portfolio"
+    editor: vscode
+

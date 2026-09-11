@@ -1,0 +1,28 @@
+permissions:
+  volume_up: {enabled: true, level: 0}
+  volume_down: {enabled: true, level: 0}
+  set_volume: {enabled: true, level: 0}
+  mute: {enabled: true, level: 0}
+  unmute: {enabled: true, level: 0}
+  media_play: {enabled: true, level: 0}
+  media_pause: {enabled: true, level: 0}
+  media_next: {enabled: true, level: 0}
+  media_previous: {enabled: true, level: 0}
+  get_time: {enabled: true, level: 0}
+  get_system_info: {enabled: true, level: 0}
+  open_app: {enabled: true, level: 1}
+  close_app: {enabled: true, level: 1}
+  open_project: {enabled: true, level: 1}
+  open_folder: {enabled: true, level: 1}
+  open_url: {enabled: true, level: 1}
+  web_search: {enabled: true, level: 1}
+  screenshot: {enabled: true, level: 1}
+  lock_pc: {enabled: true, level: 2, confirmation: true, challenge: true}
+  restart: {enabled: false, level: 2, confirmation: true, challenge: true}
+  shutdown: {enabled: false, level: 2, confirmation: true, challenge: true}
+  delete_file: {enabled: false, level: 3, confirmation: true}
+  run_shell: {enabled: false, level: 3, confirmation: true}
+  install_program: {enabled: false, level: 3, confirmation: true}
+  uninstall_program: {enabled: false, level: 3, confirmation: true}
+  send_message: {enabled: false, level: 3, confirmation: true}
+  modify_system_settings: {enabled: false, level: 3, confirmation: true}
